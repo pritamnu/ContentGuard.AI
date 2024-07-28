@@ -16,3 +16,17 @@ Body:
 
 Response:
 ---------------------------
+{
+    "category": {
+        "harassment": true,
+        "hate": true,
+        "normal": false,
+        "self_harm": true
+    },
+    "scores": {
+        "harassment": 0.23,
+        "hate": 0.9511423110961914,
+        "normal": 0.048857688903808594,
+        "self_harm": 0.12
+    }
+}
