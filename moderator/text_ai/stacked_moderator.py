@@ -10,6 +10,12 @@ from moderator.text_ai.base import BaseModel
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from transformers import TextClassificationPipeline
 
+
+##############################################
+# Constants
+##############################################
+SCORE_THRESHOLD = 0.5
+
 ##############################################
 # Individual Models
 ##############################################
@@ -28,9 +34,12 @@ class HateModel(BaseModel):
         :return:
         """
         result = self.model(text)[0]
-        if result['label'] == "LABEL_0":
-            result['label'] = 'normal'
-        return result
+        final = {'label': 'hate'}
+        if result['label'] == 'LABEL_0':
+            final['score'] = 1-result['score']
+        else:
+            final['score'] = result['score']
+        return final
 
     def _load_model(self):
         """
@@ -47,7 +56,7 @@ class HateModel(BaseModel):
         # model.to(device)
         # pipe = TextClassificationPipeline(model=model, tokenizer=tokenizer, device=device)
 
-        pipe = TextClassificationPipeline(model=model, tokenizer=tokenizer)
+        pipe = TextClassificationPipeline(model=model, tokenizer=tokenizer)  # return_all_scores=True
         return pipe
 
 
@@ -59,13 +68,13 @@ class HarassmentModel(BaseModel):
 
     def predict(self, text):
         """
-
+        Load the model for Harassment speech detection
         :param text:
         :return:
         """
         return {
-            "harassment": 0.003,
-            "normal": 93.04
+            "label": "harassment",
+            "score": 0.23
         }
 
 
@@ -76,12 +85,20 @@ class SuicideModel(BaseModel):
         self.model = None
 
     def predict(self, text):
+        """
+        Load the model for Suicide speech detection
+        :param text:
+        :return:
+        """
         return {
-            "suicide": 0.093,
-            "normal": 98.04
+            "label": "self_harm",
+            "score": 0.12
         }
 
 
+#####################################
+# Stacked Model: Integrate individual models
+#####################################
 class StackedModerator(BaseModerator):
     SCHEMA = {
         "category": {
@@ -122,7 +139,7 @@ class StackedModerator(BaseModerator):
         results = []
         for model in self.models:
             results.append(model.predict(text))
-        # print(f"Results: {results}")
+        print(f"Results: {results}")
         return self._post_process(results)
 
     def _pre_process(self, text):
@@ -130,7 +147,8 @@ class StackedModerator(BaseModerator):
         Add cleaning and preprocessing steps on the text
         :return:
         """
-        # FIXME: Nothing is done as of now
+        # FIXME: Nothing is done as of now. Need to add data clean-up
+        #
         return text
 
     def _post_process(self, results):
@@ -140,6 +158,24 @@ class StackedModerator(BaseModerator):
         :param results:
         :return:
         """
-        return results
-
-
+        # sort based on scores.
+        temp = sorted(results, key=lambda x: x['score'], reverse=True)
+        category = {}
+        scores = {}
+        response = {
+            "category": category,
+            "scores": scores
+        }
+        for result in temp:
+            if temp[0]['score'] > SCORE_THRESHOLD:
+                category.update({result['label']: True})
+            else:
+                category.update({result['label']: False})
+            scores.update({result['label']: result['score']})
+        # add the normal
+        if temp[0]['score'] > SCORE_THRESHOLD:
+            category.update({'normal': False})
+        else:
+            category.update({'normal': True})
+        scores.update({'normal': 1-temp[0]['score']})
+        return response

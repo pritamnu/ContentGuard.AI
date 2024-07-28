@@ -1,7 +1,7 @@
 Steps for deploying the REST API server
 ========================================
 
-1. git clone this repo
+1. git clone this repo: https://github.com/<username>/ContentGuard.AI.git
 2. Create the virtual environment
 3. Activate the virtual environment
 4. Execute: pip install -r requirements.txt [One time only]
