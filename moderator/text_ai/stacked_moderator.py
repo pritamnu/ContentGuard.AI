@@ -46,8 +46,8 @@ class HateModel(BaseModel):
         Load the model for Hate speech detection
         :return:
         """
-        tokenizer = AutoTokenizer.from_pretrained("Hate-speech-CNERG/english-abusive-MuRIL")
-        model = AutoModelForSequenceClassification.from_pretrained("Hate-speech-CNERG/english-abusive-MuRIL")
+        tokenizer = AutoTokenizer.from_pretrained("facebook/roberta-hate-speech-dynabench-r4-target")
+        model = AutoModelForSequenceClassification.from_pretrained("facebook/roberta-hate-speech-dynabench-r4-target")
 
         # FIXME: Uncomment on a device with Nvidia GPU
         # device = torch.device('cuda')
