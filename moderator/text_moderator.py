@@ -21,4 +21,5 @@ class TextModerator:
 # unit test
 if __name__ == "__main__":
     moderator = TextModerator()
-    print(moderator.moderate("Fuck you"))
+    # print(moderator.moderate("The cashier made vulgar jokes and wouldn't leave me alone."))
+    print(moderator.moderate("This is a normal speech"))

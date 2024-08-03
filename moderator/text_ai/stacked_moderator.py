@@ -1,14 +1,14 @@
 from moderator.text_ai.base import BaseModerator
 from moderator.text_ai.base import BaseModel
 
-# hate model imports
-# import numpy as np
-# from sklearn.metrics import confusion_matrix, classification_report
-# from sklearn.metrics import mean_squared_error as MSE
-# from sklearn.metrics import accuracy_score
-# import torch
+import torch
+import torch.nn.functional as F
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from transformers import TextClassificationPipeline
+from transformers import BertTokenizer
+
+# helpers
+from moderator.text_ai.model_helpers import BERTClassifier
 
 
 ##############################################
@@ -23,7 +23,7 @@ SCORE_THRESHOLD = 0.5
 
 class HateModel(BaseModel):
     def __init__(self):
-        super().__init__()
+        super(HateModel).__init__()
         # load the actual model here
         self.model = self._load_model()
 
@@ -35,7 +35,7 @@ class HateModel(BaseModel):
         """
         result = self.model(text)[0]
         final = {'label': 'hate'}
-        if result['label'] == 'LABEL_0':
+        if result['label'] == 'nothate':
             final['score'] = 1-result['score']
         else:
             final['score'] = result['score']
@@ -46,6 +46,10 @@ class HateModel(BaseModel):
         Load the model for Hate speech detection
         :return:
         """
+        # tokenizer = AutoTokenizer.from_pretrained(
+        #     "./models/models--facebook--roberta-hate-speech-dynabench-r4-target")
+        # model = AutoModelForSequenceClassification.from_pretrained(
+        #     "./models/models--facebook--roberta-hate-speech-dynabench-r4-target")
         tokenizer = AutoTokenizer.from_pretrained("facebook/roberta-hate-speech-dynabench-r4-target")
         model = AutoModelForSequenceClassification.from_pretrained("facebook/roberta-hate-speech-dynabench-r4-target")
 
@@ -55,7 +59,6 @@ class HateModel(BaseModel):
         # Load model directly
         # model.to(device)
         # pipe = TextClassificationPipeline(model=model, tokenizer=tokenizer, device=device)
-
         pipe = TextClassificationPipeline(model=model, tokenizer=tokenizer)  # return_all_scores=True
         return pipe
 
@@ -63,8 +66,11 @@ class HateModel(BaseModel):
 class HarassmentModel(BaseModel):
     def __init__(self):
         super().__init__()
+        # save the best model path here.
+        self.model_path = "models/harassment.pth"
         # load the actual model here
-        self.model = None
+        self.tokenizer = None
+        self.model = self._load_model()
 
     def predict(self, text):
         """
@@ -72,10 +78,42 @@ class HarassmentModel(BaseModel):
         :param text:
         :return:
         """
-        return {
-            "label": "harassment",
-            "score": 0.23
+        device = "cpu"
+        self.model.eval()
+        encoding = self.tokenizer(text, return_tensors='pt',
+                                  max_length=128,
+                                  padding='max_length',
+                                  truncation=True)
+        input_ids = encoding['input_ids'].to(device)
+        attention_mask = encoding['attention_mask'].to(device)
+
+        with torch.no_grad():
+            outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+            probabilities = F.softmax(outputs, dim=1)
+
+        predicted_class = torch.argmax(probabilities, dim=1).item()
+        predicted_probabilities = probabilities.cpu().numpy().flatten()
+
+        result = {
+            "label": "harassment" if predicted_class == 1 else "no_harassment",
+            "score": predicted_probabilities[1]
         }
+        return result
+
+    def _load_model(self):
+        """
+        Load the model for Harassment speech detection
+        :return:
+        """
+        device = "cpu"
+        bert_model_name = 'bert-base-uncased'
+        num_classes = 2
+        self.tokenizer = BertTokenizer.from_pretrained(bert_model_name)
+        model = BERTClassifier(bert_model_name, num_classes).to(device)
+        model.load_state_dict(
+            torch.load(self.model_path, map_location=device))
+        return model
+        # return TextClassificationPipeline(model=model, tokenizer=self.tokenizer)
 
 
 class SuicideModel(BaseModel):
@@ -94,6 +132,48 @@ class SuicideModel(BaseModel):
             "label": "self_harm",
             "score": 0.12
         }
+
+
+class ViolenceModel(BaseModel):
+    def __init__(self):
+        super(ViolenceModel).__init__()
+        # load the actual model here
+        self.model = self._load_model()
+
+    def predict(self, text):
+        """
+        Predict if the text is Hate speech or not
+        :param text:
+        :return:
+        """
+        result = self.model(text)[0]
+        final = {'label': 'violence'}
+        if result['label'] == 'LABEL_0':
+            final['score'] = 1-result['score']
+        else:
+            final['score'] = result['score']
+        return final
+
+    def _load_model(self):
+        """
+        Load the model for Hate speech detection
+        :return:
+        """
+        # Load model directly
+        # Load model directly
+
+        tokenizer = AutoTokenizer.from_pretrained("catalpa-cl/violence-hate-bert-de", cache_dir="models")
+        model = AutoModelForSequenceClassification.from_pretrained("catalpa-cl/violence-hate-bert-de")
+
+        # FIXME: Uncomment on a device with Nvidia GPU
+        # device = torch.device('cuda')
+        # print(device)
+        # Load model directly
+        # model.to(device)
+        # pipe = TextClassificationPipeline(model=model, tokenizer=tokenizer, device=device)
+
+        pipe = TextClassificationPipeline(model=model, tokenizer=tokenizer)  # return_all_scores=True
+        return pipe
 
 
 #####################################
@@ -119,7 +199,8 @@ class StackedModerator(BaseModerator):
     MODELS = {
         "hate_offense": HateModel,
         "harassment": HarassmentModel,
-        "suicide": SuicideModel
+        "suicide": SuicideModel,
+        "violence": ViolenceModel
     }
 
     def __init__(self):
@@ -160,17 +241,18 @@ class StackedModerator(BaseModerator):
         """
         # sort based on scores.
         temp = sorted(results, key=lambda x: x['score'], reverse=True)
-        category = {}
+        category = {x['label']: False for x in results}
         scores = {}
         response = {
             "category": category,
             "scores": scores
         }
+        # initialize the schema
         for result in temp:
             if temp[0]['score'] > SCORE_THRESHOLD:
                 category.update({result['label']: True})
-            else:
-                category.update({result['label']: False})
+                break
+        for result in temp:
             scores.update({result['label']: result['score']})
         # add the normal
         if temp[0]['score'] > SCORE_THRESHOLD:
