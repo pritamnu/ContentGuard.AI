@@ -1,3 +1,5 @@
+import os
+
 from moderator.text_ai.base import BaseModerator
 from moderator.text_ai.base import BaseModel
 
@@ -34,8 +36,8 @@ class HateModel(BaseModel):
         :return:
         """
         result = self.model(text)[0]
-        final = {'label': 'hate'}
-        if result['label'] == 'nothate':
+        final = {'label': 'hate/offensive'}
+        if result['label'] == 'LABEL_0':
             final['score'] = 1-result['score']
         else:
             final['score'] = result['score']
@@ -46,13 +48,10 @@ class HateModel(BaseModel):
         Load the model for Hate speech detection
         :return:
         """
-        # tokenizer = AutoTokenizer.from_pretrained(
-        #     "./models/models--facebook--roberta-hate-speech-dynabench-r4-target")
-        # model = AutoModelForSequenceClassification.from_pretrained(
-        #     "./models/models--facebook--roberta-hate-speech-dynabench-r4-target")
-        tokenizer = AutoTokenizer.from_pretrained("facebook/roberta-hate-speech-dynabench-r4-target")
-        model = AutoModelForSequenceClassification.from_pretrained("facebook/roberta-hate-speech-dynabench-r4-target")
-
+        # tokenizer = AutoTokenizer.from_pretrained("facebook/roberta-hate-speech-dynabench-r4-target")
+        # model = AutoModelForSequenceClassification.from_pretrained("facebook/roberta-hate-speech-dynabench-r4-target")
+        tokenizer = AutoTokenizer.from_pretrained("Hate-speech-CNERG/english-abusive-MuRIL")
+        model = AutoModelForSequenceClassification.from_pretrained("Hate-speech-CNERG/english-abusive-MuRIL")
         # FIXME: Uncomment on a device with Nvidia GPU
         # device = torch.device('cuda')
         # print(device)
@@ -67,7 +66,7 @@ class HarassmentModel(BaseModel):
     def __init__(self):
         super().__init__()
         # save the best model path here.
-        self.model_path = "models/harassment.pth"
+        self.model_path = "moderator\models\harassment.pth"
         # load the actual model here
         self.tokenizer = None
         self.model = self._load_model()
@@ -93,11 +92,12 @@ class HarassmentModel(BaseModel):
 
         predicted_class = torch.argmax(probabilities, dim=1).item()
         predicted_probabilities = probabilities.cpu().numpy().flatten()
-
-        result = {
-            "label": "harassment" if predicted_class == 1 else "no_harassment",
-            "score": predicted_probabilities[1]
-        }
+        result = dict()
+        result['label'] = "harassment"
+        if predicted_class == 1:
+            result['score'] = 1 - predicted_probabilities[1]
+        else:
+            result['score'] = predicted_probabilities[1]
         return result
 
     def _load_model(self):
@@ -120,7 +120,8 @@ class SuicideModel(BaseModel):
     def __init__(self):
         super().__init__()
         # load the actual model here
-        self.model = None
+        self.model_path = 'moderator/models/electra'
+        self.model = self._load_model()
 
     def predict(self, text):
         """
@@ -128,10 +129,28 @@ class SuicideModel(BaseModel):
         :param text:
         :return:
         """
-        return {
-            "label": "self_harm",
-            "score": 0.12
-        }
+        result = self.model(text)[0]
+        final = {'label': 'self_harm/suicide'}
+        if result['label'] == 'LABEL_0':
+            final['score'] = 1 - result['score']
+        else:
+            final['score'] = result['score']
+        return final
+
+    def _load_model(self):
+        tokenizer = AutoTokenizer.from_pretrained(self.model_path,
+                                                  local_files_only=True)
+        model = AutoModelForSequenceClassification.from_pretrained(self.model_path,
+                                                                   local_files_only=True)
+
+        # device = torch.device('cuda')
+        device = "cpu"
+        # Load model directly
+        model.to(device)
+        pipe = TextClassificationPipeline(model=model,
+                                          tokenizer=tokenizer,
+                                          device=device)  # return_all_scores=True
+        return pipe
 
 
 class ViolenceModel(BaseModel):
@@ -200,7 +219,7 @@ class StackedModerator(BaseModerator):
         "hate_offense": HateModel,
         "harassment": HarassmentModel,
         "suicide": SuicideModel,
-        "violence": ViolenceModel
+        # "violence": ViolenceModel
     }
 
     def __init__(self):
@@ -253,11 +272,16 @@ class StackedModerator(BaseModerator):
                 category.update({result['label']: True})
                 break
         for result in temp:
-            scores.update({result['label']: result['score']})
+            scores.update({result['label']: str(result['score'])})
         # add the normal
         if temp[0]['score'] > SCORE_THRESHOLD:
             category.update({'normal': False})
         else:
             category.update({'normal': True})
-        scores.update({'normal': 1-temp[0]['score']})
+        scores.update({'normal': str(1-temp[0]['score'])})
         return response
+
+
+if __name__ == '__main__':
+    cg = StackedModerator()
+    cg.moderate("Hello, testing...")
